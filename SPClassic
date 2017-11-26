@@ -1,0 +1,162 @@
+# -*- coding: utf-8 -*-
+
+'''
+
+This is the first part of SP platform.
+Function: SP for biological conservation, the classic algorithms.
+Author: PENG Xiao
+'''
+import arcpy
+from arcpy.sa import *
+import copy #copy objects
+
+# Check out the ArcGIS Spatial Analyst extension license. Reclassify, Raster Calculater et al. will use it.
+arcpy.CheckOutExtension("Spatial")
+
+
+def SetPath(path):
+    '''Set workspace which used to store all data and process data. If need, it could be extended as parameter builder.'''
+    arcpy.env.workspace=path
+
+def AccumulationResistanceSurface(inSource,inCost):
+    '''Generate the minimal accumulation surface to recognize the SP.'''
+    outCostDistance=CostDistance(inSource,inCost)#inSource could be a feature or raster.
+    outCostDistance.save(outPath+"\\"+"ARS.img")
+    
+    
+    
+
+class SingleFactorSurface(object):
+    '''
+    This is used to create resistance surface of a single factor.
+    It needs three steps: first is to read file, second is to give values based on property table,
+    and third step is to convert the layer to raster if need and reclassify.
+    '''
+    def __init__(self,name,layerPath):
+        '''This is initializing the SingleFactorSurface, including name and others.'''
+        self.name=name
+        self.layerPath=layerPath
+    #Reclassify by individual value.
+    def reclassifyRaster(self,reclassField,remapValue):
+        remap=RemapValue(remapValue)
+        inRaster=self.layerPath
+        outReclassify = Reclassify(inRaster, reclassField, remap, "NODATA")
+        self.object=outReclassify#let object get the result
+    #Reclassify by value range.
+    def reclassifyRasterByRange(self,reclassField,remapRange):
+        remap=RemapRange(remapRange)
+        inRaster=self.layerPath
+        outReclassify = Reclassify(inRaster, reclassField, remap, "NODATA")
+        self.objectByRange=outReclassify#let object get the result
+    #!!!之后看怎么把这两种重分类情形合在一起，比如通过对所给值进行判定，这样后面的代码会简化
+    #因为把类似的东西分开在写，所以在调试的时候屡屡出错。。。。。。
+        
+
+class MultiGoalsSurface(object):
+    def __init__(self,name,n):
+        self.name=name
+        self.goalsNumber=n
+    def generateMultiSingleSurface(self,names,inRasters,reclassFields,remapValues,outPath):
+        '''generate each signle surface, the same as iterating class SingleFactorSurface.'''
+        self.surfaceObjects=[]
+        for i in range(0,self.goalsNumber,1):
+            names[i]=SingleFactorSurface(names[i],inRasters[i])
+            names[i].reclassifyRaster(reclassFields[i],remapValues[i])
+            self.surfaceObjects.append(names[i].object)#after written, the path will be used to refer the raster object
+            #names[i].object.save(outPath+"\\"+names[i].name+"_rec.img")
+            #print names[i].object            
+    def rasterCombination(self,weights):
+        '''Raster caculating.'''
+        if(self.goalsNumber==len(self.surfaceObjects)&self.goalsNumber==len(weights)):
+            multiGoalsSurface=Plus(Times(self.surfaceObjects[0],weights[0]),Times(self.surfaceObjects[1],weights[1]))
+            if(self.goalsNumber>2):
+                for i in range(2,self.goalsNumber,1):
+                    multiGoalsSurface=Plus(multiGoalsSurface,Times(self.surfaceObjects[i],weights[i]))
+            self.multiGoalsSurface=multiGoalsSurface
+            #self.multiGoalsSurface.save(outPath+"\\"+self.name+"_multiGoalsSurface.img")#It could be changed to save in the main body 
+        else:
+            print "The layer number is wrong!"
+
+class SecurityPatternClassic(object):
+    '''
+    This the classic algorithm of SP. It will use the classes created before.
+    This reclass method now uses the methed singleFactorSurface.reclassifyRaster. In the future, a GUI proces will be introduced.
+    '''
+    def __init__ (self,name):
+        self.name=name
+        print 'This class is uesd to creat classic SP for biological conservation, tuorism and historial protection and so on.'
+    def accumulationResistanceSurface(self,inSource,inCost):
+        '''Generate the minimal accumulation surface to recognize the SP.'''
+        #The cost raster for CostDistance tool can't have 0 value. If have, it needs convert to a little value.
+        #Condition function is arcpy.sa is used to do this.
+        #outCon=Con(inCost,0.0001,"VALUE==0")#the field needs to be revised in the future  !!!important!!!    
+        #Use Cost Distance tool.
+        self.outCostDistance=CostDistance(inSource,inCost)#inSource could be a feature or raster.
+        self.outCostDistance.save(outPath+"\\"+"ARS.img")
+    def generateSPClassic(self,reclassFieldSPClassic,remapRangesSPClassic):
+        '''Use class SingleFactorSurface to creat SPClassic.'''
+        self.reclassField=reclassFieldSPClassic
+        self.remapRanges=remapRangesSPClassic       
+        securityPattern=SingleFactorSurface(self.name,self.outCostDistance)
+        securityPattern.reclassifyRasterByRange(self.reclassField,self.remapRanges)
+        securityPattern.objectByRange.save(outPath+"\\"+self.name+"_SPClassic.img")
+    
+
+#Main
+if __name__=='__main__':
+    #Define workspace, where the data store
+    path="E:\\data\\阜平SP\\阜平安全格局\\08SP\\SP.gdb"
+    SetPath(path)
+    #Define output path. Global variable!! But it could be changed in the future.
+    outPath="C:\\Users\\busa\\Desktop\\outPath"
+
+    '''Generate the resistance surface using several factors.'''
+    #Create the multi goals surface objects, including n goals thus n layers and n weights
+    frog=MultiGoalsSurface("frog",3)#name of the resistance surface, and the layer number
+    #Each factor's name, path, reclassFields and scores, organized in the list format, which could be replaced by GUI inputting
+    names=['frogCity','frogWater','frogRoad']
+    inRasters=['frog_recity','frog_rewa','frog_reroad']
+    reclassFields=['Value','Value','Value']
+    remapValues=[[[10,1],[40,2],[70,3],[100,4]],[[10,1],[40,2],[70,3],[100,4]],[[0,1],[40,2],[70,3],[100,4]]]
+    #Generate each factor's surface
+    frog.generateMultiSingleSurface(names,inRasters,reclassFields,remapValues,outPath)#outPath could be optional in the future
+    #Generate multi goals surface based on the weights, using raster calculating way.
+    weights=[2,5,3]
+    frog.rasterCombination(weights)
+    
+    
+    '''Cost distance analysis and generate SP.'''
+    inSource="frog_yuan"
+    inCost=frog.multiGoalsSurface
+    inCost.save(outPath+"\\"+frog.name+"_multiGoalsSurface.img")
+    #Get the surface for reclass
+    frogSP=SecurityPatternClassic("frogSP")
+    frogSP.accumulationResistanceSurface(inSource,inCost)
+    #Reclassify to get the SP.
+    reclassFieldSPClassic="Value"
+    remapRangesSPClassic=[[0,50000,1],[50001,200000,2],[200001,300000,3],[300001,400000,4]]
+    frogSP.generateSPClassic(reclassFieldSPClassic,remapRangesSPClassic)
+  
+
+else:
+    print 'error!'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
